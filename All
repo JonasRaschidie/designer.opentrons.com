@@ -1,0 +1,561 @@
+import os
+import pandas as pd
+from pathlib import Path
+
+# CSV File Path Configuration
+print("🗂️ CSV File Path Configuration")
+print("=" * 40)
+
+# Method 1: Direct path input (Update this path to your CSV file)
+csv_file_path = r"C:\Users\User\Downloads\Updated_V_gly_V_NaCl_combinations-Tris.csv"
+
+# Method 2: Interactive file browser (uncomment to use)
+# from tkinter import filedialog
+# csv_file_path = filedialog.askopenfilename(
+#     title="Select CSV File",
+#     filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+# )
+
+# Method 3: List files in Downloads folder to choose from
+downloads_folder = Path.home() / "Downloads"
+print(f"\n📂 CSV files found in Downloads folder:")
+csv_files = list(downloads_folder.glob("*.csv"))
+
+if csv_files:
+    for i, file in enumerate(csv_files, 1):
+        print(f"   {i}. {file.name}")
+    print(f"\n💡 To use a different file, update the 'csv_file_path' variable above")
+else:
+    print("   No CSV files found in Downloads folder")
+
+# Verify the selected file
+if os.path.exists(csv_file_path):
+    print(f"\n✅ Selected CSV file: {csv_file_path}")
+    print(f"📊 File size: {os.path.getsize(csv_file_path):,} bytes")
+    
+    # Quick preview of the file
+    try:
+        df_preview = pd.read_csv(csv_file_path)
+        print(f"📋 Preview: {len(df_preview)} rows, {len(df_preview.columns)} columns")
+        print(f"🧪 Columns: {list(df_preview.columns)}")
+    except Exception as e:
+        print(f"⚠️ Could not preview file: {e}")
+        
+else:
+    print(f"\n❌ File not found: {csv_file_path}")
+    print("Please update the csv_file_path variable with the correct path to your CSV file")
+# Generator Selection
+generator_choice = 2  # Change to 1 for single file, 2 for batch splitting
+
+print(f"🎯 Selected: Generator {generator_choice}")
+if generator_choice == 1:
+    print("   → Single large protocol file")
+elif generator_choice == 2:
+    print("   → Multiple batch protocol files")
+else:
+    print("   ❌ Invalid choice. Please set generator_choice to 1 or 2")
+if generator_choice == 1 and 'csv_file_path' in locals() and os.path.exists(csv_file_path):
+    print("🔧 Running Generator 1 (Single File Output)")
+    print("=" * 50)
+    
+    try:
+        # Import the original generator
+        import sys
+        sys.path.append('.')
+        from protocol_generator import OpentronProtocolGenerator
+        
+        # Create generator instance
+        generator = OpentronProtocolGenerator()
+        
+        # Generate the protocol
+        protocol_code = generator.generate_complete_protocol(
+            csv_file_path, 
+            "Cloud Point Yellow - Complete"
+        )
+        
+        # Save the protocol
+        output_filename = "cloud_point_complete_protocol.py"
+        generator.save_protocol(protocol_code, output_filename)
+        
+        print(f"\n🎉 Generator 1 Success!")
+        print(f"📁 Output file: {output_filename}")
+        print(f"📊 Protocol size: {len(protocol_code):,} characters")
+        print(f"🎯 Upload this file to your Opentrons: {output_filename}")
+        
+    except Exception as e:
+        print(f"❌ Generator 1 Error: {e}")
+        import traceback
+        traceback.print_exc()
+        
+elif generator_choice == 1:
+    print("⚠️ Generator 1 selected but CSV file not available. Please run the CSV file path section first.")
+else:
+    print("ℹ️ Generator 1 not selected. Change generator_choice to 1 to use this option.")
+class OpentronProtocolGenerator:
+    """
+    Generates complete Opentrons protocol files from CSV experimental design data.
+    This is Generator 1 - creates one large protocol file with ALL experiments.
+    """
+    
+    def __init__(self):
+        self.reagent_mapping = {
+            'V(2.4MGly)': {
+                'name': '2.4M Glycine',
+                'description': 'in water',
+                'color': '#b925ff',
+                'position': 'A1'
+            },
+            'V(5M NaCl)': {
+                'name': '5M NaCl', 
+                'description': 'in water',
+                'color': '#ffd600',
+                'position': 'A2'
+            },
+            'V(Tris 0.5 M)': {
+                'name': '500mM Tris buffer',
+                'description': 'in water', 
+                'color': '#7eff42ff',
+                'position': 'B1'
+            },
+            'V(water)': {
+                'name': 'water',
+                'description': '',
+                'color': '#50d5ffff',
+                'position': 'B2'
+            }
+        }
+        
+    def read_csv_data(self, csv_file_path: str) -> pd.DataFrame:
+        """Read and validate CSV experimental design file."""
+        try:
+            df = pd.read_csv(csv_file_path)
+            print(f"✓ Successfully loaded CSV with {len(df)} experiments")
+            return df
+        except Exception as e:
+            raise ValueError(f"Error reading CSV file: {e}")
+    
+    def validate_csv_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Validate CSV data and filter out impossible combinations."""
+        # Filter out rows with negative volumes (impossible combinations)
+        initial_count = len(df)
+        df_valid = df[df['V(water)'] >= 0].copy()
+        filtered_count = len(df_valid)
+        
+        if filtered_count < initial_count:
+            print(f"⚠ Filtered out {initial_count - filtered_count} impossible combinations (negative water volumes)")
+        
+        return df_valid
+
+print("✓ OpentronProtocolGenerator class defined!")
+# Generator 1 Helper Methods
+def generate_protocol_header_g1(protocol_name: str = "Generated Protocol") -> str:
+    """Generate protocol header with imports and metadata for Generator 1."""
+    timestamp = datetime.now().isoformat() + "Z"
+    
+    header = f'''import json
+from opentrons import protocol_api, types
+
+metadata = {{
+    "protocolName": "{protocol_name}",
+    "author": "Generated from CSV",
+    "description": "Automated protocol generated from experimental design CSV",
+    "created": "{timestamp}",
+    "lastModified": "{timestamp}",
+    "apiLevel": "2.19"
+}}
+
+requirements = {{"robotType": "OT-2"}}
+
+def run(protocol: protocol_api.ProtocolContext) -> None:
+'''
+    return header
+
+def generate_labware_setup_g1() -> str:
+    """Generate labware loading code for Generator 1."""
+    setup = '''    # Load Labware:
+    tip_rack_20ul_1 = protocol.load_labware(
+        "opentrons_96_filtertiprack_20ul",
+        location="2",
+        label="20uL Tips 1"
+    )
+    tip_rack_20ul_2 = protocol.load_labware(
+        "opentrons_96_filtertiprack_20ul",
+        location="5",
+        label="20uL Tips 2"
+    )
+    tip_rack_200ul_1 = protocol.load_labware(
+        "opentrons_96_filtertiprack_200ul", 
+        location="3",
+        label="200uL Tips 1"
+    )
+    tip_rack_200ul_2 = protocol.load_labware(
+        "opentrons_96_filtertiprack_200ul", 
+        location="6",
+        label="200uL Tips 2"
+    )
+    tip_rack_200ul_3 = protocol.load_labware(
+        "opentrons_96_filtertiprack_200ul", 
+        location="7",
+        label="200uL Tips 3"
+    )
+    tube_rack = protocol.load_labware(
+        "opentrons_10_tuberack_falcon_4x50ml_6x15ml_conical",
+        location="1",
+        label="Reagent Tubes"
+    )
+    well_plate = protocol.load_labware(
+        "corning_96_wellplate_360ul_flat",
+        location="4", 
+        label="Reaction Plate"
+    )
+
+    # Load Pipettes:
+    p20 = protocol.load_instrument(
+        "p20_single_gen2", 
+        "left", 
+        tip_racks=[tip_rack_20ul_1, tip_rack_20ul_2]
+    )
+    p300 = protocol.load_instrument(
+        "p300_single_gen2",
+        "right", 
+        tip_racks=[tip_rack_200ul_1, tip_rack_200ul_2, tip_rack_200ul_3]
+    )
+
+'''
+    return setup
+
+print("✓ Generator 1 helper functions defined!")
+def generate_liquid_definitions_g1(reagent_mapping: Dict) -> str:
+    """Generate liquid definitions for Generator 1."""
+    liquids = '''    # Define Liquids:
+'''
+    for i, (col, reagent) in enumerate(reagent_mapping.items()):
+        liquids += f'''    liquid_{i+1} = protocol.define_liquid(
+        "{reagent['name']}",
+        description="{reagent['description']}",
+        display_color="{reagent['color']}"
+    )
+'''
+    
+    liquids += '''
+    # Load Liquids in tubes:
+'''
+    for i, (col, reagent) in enumerate(reagent_mapping.items()):
+        liquids += f'''    tube_rack["{reagent['position']}"].load_liquid(
+        liquid_{i+1}, 
+        volume=10000
+    )
+'''
+    
+    return liquids
+
+def get_well_name_g1(row_idx: int) -> str:
+    """Convert row index to well name (A1, A2, B1, etc.) for Generator 1."""
+    row_letter = chr(65 + (row_idx // 12))  # A, B, C, etc.
+    col_number = (row_idx % 12) + 1
+    return f"{row_letter}{col_number}"
+
+def choose_pipette_g1(volume: float) -> str:
+    """Choose appropriate pipette based on volume for Generator 1."""
+    if volume <= 20:
+        return "p20"
+    else:
+        return "p300"
+
+def generate_transfer_steps_g1(df: pd.DataFrame, reagent_mapping: Dict) -> str:
+    """Generate liquid transfer steps from complete CSV data for Generator 1."""
+    steps = f'''    # Protocol Steps:
+    protocol.comment("Starting protocol with {len(df)} experiments")
+    
+'''
+    
+    # Group transfers by reagent type and volume for efficiency
+    reagent_columns = [col for col in df.columns if col.startswith('V(') and col != 'V(water)']
+    
+    step_number = 1
+    
+    # Process each reagent type
+    for reagent_col in reagent_columns:
+        reagent_info = reagent_mapping[reagent_col]
+        
+        # Group by volume to do batch transfers
+        volume_groups = df[df[reagent_col] > 0].groupby(reagent_col)
+        
+        for volume, group in volume_groups:
+            if volume <= 0:
+                continue
+                
+            dest_wells = [get_well_name_g1(idx) for idx in group.index]
+            pipette = choose_pipette_g1(volume)
+            
+            steps += f'''    # Step {step_number}: Transfer {volume}uL of {reagent_info['name']}
+    protocol.comment("Step {step_number}: {volume}uL {reagent_info['name']} to {len(dest_wells)} wells")
+    
+    {pipette}.transfer(
+        volume={volume},
+        source=tube_rack["{reagent_info['position']}"],
+        dest=[well_plate[well] for well in {dest_wells}],
+        new_tip="always"
+    )
+
+'''
+            step_number += 1
+    
+    # Add water last to top up to final volume
+    water_data = df[df['V(water)'] > 0]
+    if not water_data.empty:
+        water_info = reagent_mapping['V(water)']
+        
+        # Group water transfers by volume
+        water_groups = water_data.groupby('V(water)')
+        
+        for volume, group in water_groups:
+            dest_wells = [get_well_name_g1(idx) for idx in group.index]
+            pipette = choose_pipette_g1(volume)
+            
+            steps += f'''    # Step {step_number}: Add {volume}uL water to reach final volume
+    protocol.comment("Step {step_number}: Adding {volume}uL water to {len(dest_wells)} wells")
+    
+    {pipette}.transfer(
+        volume={volume},
+        source=tube_rack["{water_info['position']}"],
+        dest=[well_plate[well] for well in {dest_wells}],
+        new_tip="always"
+    )
+
+'''
+            step_number += 1
+    
+    steps += '''    protocol.comment("Protocol completed successfully!")
+'''
+    
+    return steps
+
+print("✓ Generator 1 transfer and liquid functions defined!")
+# Add methods to OpentronProtocolGenerator class
+def add_methods_to_generator():
+    """Add the main methods to OpentronProtocolGenerator class."""
+    
+    # Add generate_complete_protocol method
+    def generate_complete_protocol(self, csv_file_path: str, 
+                                 protocol_name: str = "Generated Protocol") -> str:
+        """Generate complete protocol from CSV file."""
+        
+        # Read and validate data
+        df = self.read_csv_data(csv_file_path)
+        df = self.validate_csv_data(df)
+        
+        # Generate protocol sections
+        header = generate_protocol_header_g1(protocol_name)
+        labware = generate_labware_setup_g1()
+        liquids = generate_liquid_definitions_g1(self.reagent_mapping)
+        steps = generate_transfer_steps_g1(df, self.reagent_mapping)
+        
+        # Combine all sections
+        complete_protocol = header + labware + liquids + steps
+        
+        return complete_protocol
+    
+    # Add save_protocol method
+    def save_protocol(self, protocol_code: str, output_path: str) -> None:
+        """Save protocol to file."""
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(protocol_code)
+        print(f"✓ Protocol saved to: {output_path}")
+    
+    # Attach methods to the class
+    OpentronProtocolGenerator.generate_complete_protocol = generate_complete_protocol
+    OpentronProtocolGenerator.save_protocol = save_protocol
+
+# Execute the function to add methods
+add_methods_to_generator()
+
+print("✓ OpentronProtocolGenerator class completed with all methods!")
+# Generator 2 (Batch Splitter) Functions
+def generate_multiple_protocols(csv_file_path: str, protocol_name: str = "Cloud Point Experiment", 
+                              experiments_per_batch: int = 28, output_dir: str = "protocols") -> List[str]:
+    """Generate multiple protocol files from CSV data."""
+    
+    # Create a simple batch generator
+    class SimpleBatchGenerator:
+        def __init__(self, experiments_per_batch: int = 28):
+            self.experiments_per_batch = experiments_per_batch
+            self.reagent_mapping = {
+                'V(2.4MGly)': {'name': '2.4M Glycine', 'description': 'in water', 'color': '#b925ff', 'position': 'A1'},
+                'V(5M NaCl)': {'name': '5M NaCl', 'description': 'in water', 'color': '#ffd600', 'position': 'A2'},
+                'V(Tris 0.5 M)': {'name': '500mM Tris buffer', 'description': 'in water', 'color': '#7eff42ff', 'position': 'B1'},
+                'V(water)': {'name': 'water', 'description': '', 'color': '#50d5ffff', 'position': 'B2'}
+            }
+            
+        def read_and_validate_csv(self, csv_file_path: str) -> pd.DataFrame:
+            df = pd.read_csv(csv_file_path)
+            print(f"✓ Successfully loaded CSV with {len(df)} experiments")
+            initial_count = len(df)
+            df_valid = df[df['V(water)'] >= 0].copy()
+            filtered_count = len(df_valid)
+            if filtered_count < initial_count:
+                print(f"⚠ Filtered out {initial_count - filtered_count} impossible combinations")
+            return df_valid
+    
+    # Create generator instance
+    generator = SimpleBatchGenerator(experiments_per_batch)
+    
+    # Read and validate data
+    df = generator.read_and_validate_csv(csv_file_path)
+    
+    # Split into batches
+    batches = []
+    for i in range(0, len(df), experiments_per_batch):
+        batch = df.iloc[i:i + experiments_per_batch].copy()
+        batch.reset_index(drop=True, inplace=True)
+        batches.append(batch)
+    
+    print(f"📊 Split {len(df)} experiments into {len(batches)} batches")
+    for i, batch in enumerate(batches):
+        print(f"   Batch {i+1}: {len(batch)} experiments")
+    
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    
+    generated_files = []
+    
+    # Generate protocol for each batch using Generator 2 style functions
+    for i, batch_df in enumerate(batches):
+        batch_number = i + 1
+        
+        # Generate protocol code using batch-specific functions
+        header = generate_protocol_header(protocol_name, batch_number)
+        labware = generate_labware_setup()
+        liquids = generate_liquid_definitions(generator.reagent_mapping)
+        steps = generate_transfer_steps(batch_df, generator.reagent_mapping, batch_number)
+        
+        # Combine all sections
+        protocol_code = header + labware + liquids + steps
+        
+        # Save to file
+        filename = f"{protocol_name.replace(' ', '_').lower()}_batch_{batch_number}.py"
+        filepath = os.path.join(output_dir, filename)
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(protocol_code)
+        
+        generated_files.append(filepath)
+        
+        # Print batch info
+        gly_range = f"{batch_df['C(Gly)'].min():.1f}-{batch_df['C(Gly)'].max():.1f}M" if 'C(Gly)' in batch_df.columns else "N/A"
+        nacl_range = f"{batch_df['C(NaCl)'].min():.1f}-{batch_df['C(NaCl)'].max():.1f}M" if 'C(NaCl)' in batch_df.columns else "N/A"
+        
+        print(f"✓ Batch {batch_number}: {len(batch_df)} experiments - {filename}")
+        print(f"   Glycine: {gly_range}, NaCl: {nacl_range}")
+    
+    return generated_files
+
+print("✓ Generator 2 functions restored and cleaned up!")
+if generator_choice == 2 and 'csv_file_path' in locals() and os.path.exists(csv_file_path):
+    print("🔧 Running Generator 2 (Batch Split Output)")
+    print("=" * 50)
+    
+    try:
+        # Generate multiple protocols (28 experiments per batch)
+        generated_files = generate_multiple_protocols(
+            csv_file_path=csv_file_path,
+            protocol_name="Cloud Point Yellow",
+            experiments_per_batch=28,
+            output_dir="batch_protocols"
+        )
+        
+        print(f"\n🎉 Generator 2 Success!")
+        print(f"📁 Generated {len(generated_files)} protocol files:")
+        for i, file in enumerate(generated_files, 1):
+            filename = os.path.basename(file)
+            print(f"   {i}. {filename}")
+        
+        print(f"\n📂 All files saved in: batch_protocols/")
+        print(f"🎯 Upload these .py files to your Opentrons Robot")
+        
+    except Exception as e:
+        print(f"❌ Generator 2 Error: {e}")
+        import traceback
+        traceback.print_exc()
+        
+elif generator_choice == 2:
+    print("⚠️ Generator 2 selected but CSV file not available. Please run the CSV file path section first.")
+else:
+    print("ℹ️ Generator 2 not selected. Change generator_choice to 2 to use this option.")
+# 🔍 Verify Generated Files
+print("🔍 Checking generated protocol files...")
+
+# Check for Generator 1 output
+generator_1_file = "cloud_point_complete_protocol.py"
+if os.path.exists(generator_1_file):
+    size = os.path.getsize(generator_1_file)
+    print(f"\n✅ Generator 1 Output Found:")
+    print(f"   📁 File: {generator_1_file}")
+    print(f"   📏 Size: {size:,} bytes")
+    
+    # Quick file preview
+    with open(generator_1_file, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+        print(f"   📄 Lines: {len(lines)}")
+        print(f"   🔬 Preview: {lines[0].strip()[:50]}...")
+
+# Check for Generator 2 output
+batch_dir = "batch_protocols"
+if os.path.exists(batch_dir) and os.path.isdir(batch_dir):
+    protocol_files = [f for f in os.listdir(batch_dir) if f.endswith('.py')]
+    if protocol_files:
+        print(f"\n✅ Generator 2 Output Found:")
+        print(f"   📂 Directory: {batch_dir}/")
+        print(f"   📊 Files: {len(protocol_files)} protocol files")
+        
+        total_size = 0
+        for filename in sorted(protocol_files):
+            filepath = os.path.join(batch_dir, filename)
+            size = os.path.getsize(filepath)
+            total_size += size
+            print(f"   📁 {filename} ({size:,} bytes)")
+        
+        print(f"   📏 Total size: {total_size:,} bytes")
+
+# If no files found
+if not os.path.exists(generator_1_file) and not (os.path.exists(batch_dir) and os.listdir(batch_dir)):
+    print("\n⚠️ No protocol files found yet.")
+    print("   Run one of the generators above to create protocol files.")
+    
+print(f"\n📁 Current directory: {os.getcwd()}")
+print("🚀 Ready to upload to Opentrons Robot!")
+# 🔄 Quick Generator Test (Run this to test either generator easily)
+def test_generator(choice: int):
+    """Quick function to test either generator."""
+    if choice == 1:
+        print("🧪 Testing Generator 1 (Single File)")
+        if 'csv_file_path' in locals() and os.path.exists(csv_file_path):
+            generator = OpentronProtocolGenerator()
+            protocol_code = generator.generate_complete_protocol(
+                csv_file_path, "Cloud Point Yellow - Complete"
+            )
+            generator.save_protocol(protocol_code, "cloud_point_complete_protocol.py")
+            print(f"✅ Generator 1 Complete! File size: {len(protocol_code):,} characters")
+        else:
+            print("❌ CSV file not found")
+            
+    elif choice == 2:
+        print("🧪 Testing Generator 2 (Batch Split)")
+        if 'csv_file_path' in locals() and os.path.exists(csv_file_path):
+            generated_files = generate_multiple_protocols(
+                csv_file_path=csv_file_path,
+                protocol_name="Cloud Point Yellow",
+                experiments_per_batch=28,
+                output_dir="batch_protocols"
+            )
+            print(f"✅ Generator 2 Complete! Generated {len(generated_files)} files")
+        else:
+            print("❌ CSV file not found")
+    else:
+        print("❌ Invalid choice. Use 1 or 2")
+
+# Uncomment and run to test:
+# test_generator(1)  # Test Generator 1
+# test_generator(2)  # Test Generator 2
+
+print("🔄 Quick test function ready! Uncomment the lines above to test either generator.")
