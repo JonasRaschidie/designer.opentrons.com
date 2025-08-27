@@ -259,7 +259,7 @@ def select_pipette(volume):
     else:
         return "pipette_left", "p300_single_gen2"
 
-def generate_liquid_class(step_name, pipette_type, volume):
+def generate_liquid_class(step_name, pipette_type, volume, liquid_name=None):
     """Generate liquid class definition"""
     
     if pipette_type == "p20_single_gen2":
@@ -268,6 +268,22 @@ def generate_liquid_class(step_name, pipette_type, volume):
     else:
         tip_rack = "opentrons/opentrons_96_filtertiprack_200ul/1"
         flow_rate = 46.4
+    
+    # Disable mixing for buffer (Tris) transfers - handled in mix_config below
+    
+    # Set push-out volume based on pipette type and volume to avoid exceeding max blowout
+    if pipette_type == "p20_single_gen2":
+        # For p20, use smaller push-out volume, max 2 µL or 20% of volume, whichever is smaller
+        push_out_volume = int(round(min(2, max(0.5, volume * 0.2))))
+    else:
+        # For p300, use standard push-out volume
+        push_out_volume = int(round(min(5, max(1, volume * 0.1))))
+    
+    # Generate mix configuration - simpler format for Tris buffer
+    if liquid_name == "tris":
+        mix_config = '"mix": {"enabled": False},'
+    else:
+        mix_config = f'"mix": {{"enabled": True, "repetitions": 5, "volume": {min(20, volume//2)}}},'
     
     return f'''        liquid_class=protocol.define_liquid_class(
             name="{step_name}",
@@ -333,8 +349,8 @@ def generate_liquid_class(step_name, pipette_type, volume):
                         "blowout": {{"enabled": True, "location": "destination", "flow_rate": {flow_rate}}},
                     }},
                     "correction_by_volume": [(0, 0)],
-                    "push_out_by_volume": [(0, 5)],
-                    "mix": {{"enabled": True, "repetitions": 5, "volume": {min(20, volume//2)}}},
+                    "push_out_by_volume": [(0, {push_out_volume})],
+                    {mix_config}
                 }},
             }}}}}},
         ),'''
@@ -359,7 +375,7 @@ def generate_transfer_step(step_num, volume, source_tube, dest_wells, liquid_nam
         new_tip="always",
         trash_location=protocol.fixed_trash,
         keep_last_tip=True,
-{generate_liquid_class(f"transfer_step_{step_num}", pipette_type, volume)}
+{generate_liquid_class(f"transfer_step_{step_num}", pipette_type, volume, liquid_name)}
     )
     {pipette}.drop_tip()
 '''
