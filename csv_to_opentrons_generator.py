@@ -150,17 +150,21 @@ def identify_columns(df):
     print(f"Identified columns: {columns}")
     return columns
 
-def generate_protocol_header():
+def generate_protocol_header(segment_num=1, total_segments=1, wells_in_segment=28):
     """Generate protocol header and imports"""
     timestamp = datetime.now().isoformat()
+    
+    protocol_name = METADATA['protocolName']
+    if total_segments > 1:
+        protocol_name += f" - Segment {segment_num}/{total_segments}"
     
     header = f'''import json
 from opentrons import protocol_api, types
 
 metadata = {{
-    "protocolName": "{METADATA['protocolName']}",
+    "protocolName": "{protocol_name}",
     "author": "{METADATA['author']}",
-    "description": "{METADATA['description']}",
+    "description": "{METADATA['description']} (Segment {segment_num}: {wells_in_segment} wells)",
     "created": "{timestamp}",
     "lastModified": "{timestamp}",
     "protocolDesigner": "Python Generator",
@@ -396,41 +400,38 @@ def group_by_reagent_and_volume(df, columns, well_positions):
     
     return transfers
 
-def generate_protocol_steps(segments, columns):
-    """Generate all protocol steps for all segments"""
-    all_steps = ""
+def generate_protocol_steps_for_segment(df_segment, columns, segment_idx=1):
+    """Generate protocol steps for a single segment"""
+    steps = ""
     step_counter = 1
     
-    for segment_idx, df_segment in enumerate(segments):
-        all_steps += f"\n    # ===== SEGMENT {segment_idx + 1} ({len(df_segment)} wells) =====\n"
-        
-        # Get well positions for this segment
-        well_positions = get_well_positions(df_segment)
-        
-        # Reset index for proper mapping
-        df_segment = df_segment.reset_index(drop=True)
-        
-        # Group transfers by reagent and volume
-        transfers = group_by_reagent_and_volume(df_segment, columns, well_positions)
-        
-        # Generate steps for each transfer
-        for transfer in transfers:
-            if transfer['count'] > 0:
-                step = generate_transfer_step(
-                    step_counter,
-                    transfer['volume'],
-                    transfer['source_tube'],
-                    transfer['wells'],
-                    transfer['reagent'],
-                    columns
-                )
-                all_steps += step
-                step_counter += 1
+    # Get well positions for this segment
+    well_positions = get_well_positions(df_segment)
     
-    return all_steps
+    # Reset index for proper mapping
+    df_segment = df_segment.reset_index(drop=True)
+    
+    # Group transfers by reagent and volume
+    transfers = group_by_reagent_and_volume(df_segment, columns, well_positions)
+    
+    # Generate steps for each transfer
+    for transfer in transfers:
+        if transfer['count'] > 0:
+            step = generate_transfer_step(
+                step_counter,
+                transfer['volume'],
+                transfer['source_tube'],
+                transfer['wells'],
+                transfer['reagent'],
+                columns
+            )
+            steps += step
+            step_counter += 1
+    
+    return steps
 
 def generate_full_protocol(csv_path):
-    """Generate complete protocol from CSV"""
+    """Generate complete protocol from CSV, creating separate files for each segment"""
     
     print(f"Processing CSV file: {csv_path}")
     
@@ -447,21 +448,54 @@ def generate_full_protocol(csv_path):
     
     # Segment data
     segments = segment_data(df_filtered)
+    total_segments = len(segments)
     
-    # Generate protocol sections
-    protocol_code = generate_protocol_header()
-    protocol_code += generate_labware_section()
-    protocol_code += generate_liquid_definitions()
-    protocol_code += "\n    # PROTOCOL STEPS\n"
-    protocol_code += generate_protocol_steps(segments, columns)
+    # Generate protocol files for each segment
+    generated_files = []
     
-    return protocol_code
+    for segment_idx, df_segment in enumerate(segments):
+        segment_num = segment_idx + 1
+        wells_in_segment = len(df_segment)
+        
+        # Create unique filename for each segment
+        if total_segments > 1:
+            # Extract directory and filename without extension
+            output_dir = os.path.dirname(OUTPUT_FILE_PATH)
+            base_filename = os.path.splitext(os.path.basename(OUTPUT_FILE_PATH))[0]
+            segment_file_path = os.path.join(output_dir, f"{base_filename}_Segment_{segment_num}.py")
+        else:
+            segment_file_path = OUTPUT_FILE_PATH
+        
+        # Ensure the directory exists
+        output_dir = os.path.dirname(segment_file_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        
+        print(f"Generating Segment {segment_num}/{total_segments}: {wells_in_segment} wells -> {os.path.basename(segment_file_path)}")
+        
+        # Generate protocol sections for this segment
+        protocol_code = generate_protocol_header(segment_num, total_segments, wells_in_segment)
+        protocol_code += generate_labware_section()
+        protocol_code += generate_liquid_definitions()
+        protocol_code += f"\n    # PROTOCOL STEPS - SEGMENT {segment_num}/{total_segments} ({wells_in_segment} wells)\n"
+        protocol_code += generate_protocol_steps_for_segment(df_segment, columns, segment_idx)
+        
+        # Write segment file
+        try:
+            with open(segment_file_path, 'w', encoding='utf-8') as f:
+                f.write(protocol_code)
+            generated_files.append(segment_file_path)
+            print(f"✅ Segment {segment_num} saved successfully")
+        except Exception as e:
+            print(f"❌ Error writing segment {segment_num}: {e}")
+    
+    return generated_files
 
 def main():
     """Main function"""
     print("=== Opentrons Protocol Generator ===")
     print(f"Input CSV: {CSV_FILE_PATH}")
-    print(f"Output Protocol: {OUTPUT_FILE_PATH}")
+    print(f"Output Base: {OUTPUT_FILE_PATH}")
     
     # Check if input file exists
     if not os.path.exists(CSV_FILE_PATH):
@@ -470,18 +504,23 @@ def main():
         return
     
     # Generate protocol
-    protocol_code = generate_full_protocol(CSV_FILE_PATH)
+    generated_files = generate_full_protocol(CSV_FILE_PATH)
     
-    if protocol_code:
-        # Write to file
-        try:
-            with open(OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
-                f.write(protocol_code)
-            print(f"\n✅ Protocol generated successfully!")
-            print(f"📁 Output saved to: {OUTPUT_FILE_PATH}")
-            print(f"📊 Total lines: {len(protocol_code.splitlines())}")
-        except Exception as e:
-            print(f"❌ Error writing output file: {e}")
+    if generated_files:
+        print(f"\n✅ Protocol generation completed!")
+        print(f"📁 Generated {len(generated_files)} protocol file(s):")
+        for i, file_path in enumerate(generated_files, 1):
+            lines = 0
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    lines = len(f.readlines())
+            except:
+                pass
+            print(f"   {i}. {os.path.basename(file_path)} ({lines} lines)")
+        print(f"\n� Summary:")
+        print(f"   - Total segments: {len(generated_files)}")
+        print(f"   - Max wells per file: 28")
+        print(f"   - Ready for Opentrons execution")
     else:
         print("❌ Failed to generate protocol")
 
